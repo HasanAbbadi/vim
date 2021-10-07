@@ -1,6 +1,13 @@
 " .vimrc
 
 " Plugins: ============ {{{
+if ! filereadable(system('echo -n "${XDG_CONFIG_HOME:-$HOME/.config}/nvim/autoload/plug.vim"'))
+  echo "Downloading junegunn/vim-plug to manage plugins..."
+  silent !mkdir -p ${XDG_CONFIG_HOME:-$HOME/.config}/nvim/autoload/
+  silent !curl "https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim" > ${XDG_CONFIG_HOME:-$HOME/.config}/nvim/autoload/plug.vim
+  autocmd VimEnter * PlugInstall
+endif
+
 call plug#begin('~/.vim/plugged')
 Plug 'junegunn/goyo.vim'
 call plug#end()
@@ -115,28 +122,94 @@ function! HLNext (blinktime)
   endfor
 endfunction
 
-function! IndentLines()
-  let space = &l:shiftwidth
-  let n = len(g:indentLine_char_list)
+function! IndentLines(status)
 
-  if g:showFirstIndentLevel
-    let level = 1
-    else
-    let level = 0
+  if !exists("g:IndentLines")
+    let g:IndentLines = "off"
   endif
 
-  for i in range(3, space * 20 + 1, space)
-    if n > 0
-      let char = g:indentLine_char_list[level % n]
-      let level += 1
+  if (a:status == "toggle")
+    if (g:IndentLines == "on")
+      let g:IndentLines = "off"
     else
-      let char = g:indentLine_char
+      let g:IndentLines = "on"
     endif
-    call add([], matchadd('Conceal', '^\s\+\zs\%'.i.'v ', 0, -1, {'conceal': char}))
-  endfor
-  if g:showFirstIndentLevel
-    execute 'syntax match Underline /^ / containedin=ALL conceal cchar=' . g:indentLine_char_list[0]
   endif
+
+  if ( a:status == "on" || g:IndentLines == "on")
+    set conceallevel=1
+    let space = &l:shiftwidth
+    let n = len(g:indentLine_char_list)
+
+    if g:showFirstIndentLevel
+      let level = 1
+    else
+      let level = 0
+    endif
+
+    let g:indent_id = []
+    for i in range(3, space * 20 + 1, space)
+      if n > 0
+        let char = g:indentLine_char_list[level % n]
+        let level += 1
+      else
+        let char = g:indentLine_char
+      endif
+      call add(g:indent_id, matchadd('Conceal', '^\s\+\zs\%'.i.'v ', 0, -1, {'conceal': char}))
+    endfor
+    if g:showFirstIndentLevel
+      execute 'syntax match Underline /^ / containedin=ALL conceal cchar=' . g:indentLine_char_list[0]
+    endif
+  elseif ( a:status == "off" || g:IndentLines == "off" )
+    for id in g:indent_id
+      try
+        call matchdelete(id)
+      catch /^Vim\%((\a\+)\)\=:E80[23]/
+      endtry
+    endfor
+    let g:indent_id = []
+    syntax clear Underline
+    set conceallevel=3
+  endif
+endfunction
+
+" colored pairs and punctuations
+function! RainbowPairs()
+  " last is punctuations color
+  let s:ctermfgs = [9,6,5,12,123,4,3,2,1,'yellow']
+  let b:loaded = [ ['(', ')'], ['\[', '\]'], ['{', '}'] ]
+
+  let b:operators = '"\v[{\[(<_"''`#*/>)\]}]@![[:punct:]]|\*/@!|/[/*]@!|\<#@!|#@<!\>"'
+  let s:max = len(s:ctermfgs)
+  if b:operators != ''
+    execute 'syntax match op_lv0 '.b:operators
+    let cmd = 'syntax match %s %s containedin=%s contained'
+    for [left , right] in b:loaded
+      for each in range(1, s:max)
+        execute printf(cmd, 'op_lv'.each, b:operators, 'lv'.each)
+      endfor
+    endfor
+  endif
+
+  let str = 'TOP'
+  for each in range(1, s:max)
+    let str .= ',lv'.each
+  endfor
+
+  let cmd = 'syntax region %s matchgroup=%s start=+%s+ end=+%s+ containedin=%s contains=%s,%s,@Spell fold'
+  for [left , right] in b:loaded
+    for each in range(1, s:max)
+      execute printf(cmd, 'lv'.each, 'lv'.each.'c', left, right, 'lv'.(each % s:max + 1), str, 'op_lv'.each)
+    endfor
+  endfor
+
+  execute 'hi default op_lv0 ctermfg='.s:ctermfgs[-1]
+  for id in range(1 , s:max)
+    let ctermfg = s:ctermfgs[(s:max - id) % len(s:ctermfgs)]
+    execute 'hi default lv'.id.'c ctermfg='.ctermfg
+    execute 'hi default op_lv'.id.' ctermfg='.ctermfg
+  endfor
+  execute 'syntax sync fromstart'
 endfunction
 
 " }}}
@@ -156,13 +229,13 @@ function SmoothScroll(direction)
   endwhile
 endfunction
 
-" disable status lien when netrw is in focus
-function! NetrwSL()
-   if 'netrw' == &filetype
-       set laststatus=0
-   else
-       set laststatus=2
-   endif
+" check all keybindings
+function! OpenMappings()
+  redir! > vim_mappings.tmp
+  silent verbose map
+  redir END
+  tabnew vim_mappings.tmp
+  autocmd BufLeave vim_mappings.tmp !rm vim_mappings.tmp > /dev/null
 endfunction
 
 " navigation between opened and closed folds
@@ -218,14 +291,18 @@ function! ToggleComment()
 endfunction
 
 " kinda smart tab completion
-function! TabCompletion()
-  if (getline(".")[col(".")-2]) != '' && (getline(".")[col(".")-2]) != ' '
-    return "\<C-x>\<C-p>"
+function! TabCompletion(direction)
+  if(pumvisible())
+    return a:direction == 1 ? "\<C-n>" : "\<C-p>"
   else
-    return "\<Tab>"
+    if (getline(".")[col(".")-2]) != '' && (getline(".")[col(".")-2]) != ' '
+      return "\<C-x>\<C-p>"
+    else
+      return "\<Tab>"
+    endif
   endif
 endfunction
- 
+
 " auto pair punctuations
 function! AutoPairs()
 
@@ -294,6 +371,54 @@ function! SplitEnvironment()
   echohl none
 endfunction
 
+function! DistractionFree()
+  if !exists("g:free")
+    let g:free = 'no'
+  endif
+
+  if (g:free == 'no')
+    let g:free = 'yes'
+  else
+    let g:free = 'no'
+  endif
+
+  if (g:free == 'yes')
+    " Global options
+    let &winheight = max([&winminheight, 1])
+    set winminheight=1
+    set winheight=1
+    set winminwidth=1 winwidth=1
+    set laststatus=0
+    set showtabline=0
+    set noruler
+    set sidescroll=1
+    set sidescrolloff=0
+    set nu!
+    set relativenumber!
+    set foldcolumn=0
+    set showmode
+    call IndentLines("off")
+    autocmd VimEnter,BufNew,BufLeave,BufRead *      call IndentLines("off")
+  else
+    " Global options
+    set winminwidth=1 winwidth=1
+    set laststatus=2
+    set showtabline=1
+    if (&filetype != 'help')
+      set listchars=tab:>~,nbsp:_,trail:·,extends:>,precedes:<
+      set list
+    endif
+    set sidescroll=0
+    set sidescrolloff=0
+    set nu!
+    set relativenumber!
+    set foldcolumn=3
+    set noshowmode
+    call IndentLines("on")
+    autocmd VimEnter,BufNew,BufLeave,BufRead *      call IndentLines("on")
+  endif
+endfunction
+
 " StatusLine: {{{
 function! StatusLine()
   function! DefaultStatusLine()
@@ -313,19 +438,16 @@ function! StatusLine()
     set statusline+=%3*\ %m                                "modified?
     set statusline+=%4*\ %y\                               "FileType
   endfunction
-  let splits_num = len(tabpagebuflist())
-  if splits_num > 1
+  let screen_width = winwidth('%')
+
+  if screen_width <= 50
     call DefaultStatusLine()
-    set statusline-=%5*\ %=\ %{''.(&fenc!=''?&fenc:&enc).''}   "Encoding
-    set statusline-=%5*\ %{(&bomb?\",BOM\":\"\")}          "Encoding2
-    set statusline-=%6*\ %{&ff}\                           "FileFormat (dos/unix..) 
-    set statusline-=%7*\ %{&spelllang}\ %{&hls?'H':''}\    "Spellanguage & Highlight on?
-    set statusline-=%8*\ line:%l/%L\ (%02p%%)\         "currentline/total (%)
-    set statusline-=%9*\ col:%02c\ \ \                     "Column number
+  elseif screen_width <= 80
+    call DefaultStatusLine()
     set statusline+=%8*\ %=\ %l/%L\ (%02p%%)\         "currentline/total (%)
+    set statusline+=%9*\ col:%02c\ \ \                     "Column number
   else
     call DefaultStatusLine()
-    set statusline-=%8*\ %=\ %l/%L\ (%02p%%)\         "currentline/total (%)
     set statusline+=%5*\ %=\ %{''.(&fenc!=''?&fenc:&enc).''}   "Encoding
     set statusline+=%5*\ %{(&bomb?\",BOM\":\"\")}          "Encoding2
     set statusline+=%6*\ %{&ff}\                           "FileFormat (dos/unix..) 
@@ -341,8 +463,8 @@ endfunction
 " ColorScheme: ======== {{{
 "===============================
 syntax on
-" colorscheme default
-hi Normal ctermbg=234
+colorscheme default
+" hi Normal ctermbg=234
 
 " the color column when exceeding 80 characters
 call matchadd('ColorColumn', '\%80v', 100)
@@ -351,6 +473,8 @@ hi ColorColumn ctermbg=134 ctermfg=0
 hi LineNr cterm=italic ctermfg=65
 " special keys
 hi SpecialKey ctermbg=NONE ctermfg=110
+" when a matched pair is under cursor, ex []
+hi MatchParen cterm=BOLD ctermbg=234 ctermfg=yellow
 " vertical split line
 hi VertSplit cterm=NONE ctermbg=0
 " visual mode
@@ -360,7 +484,7 @@ hi Visual cterm=NONE ctermbg=150 ctermfg=16 gui=NONE
 hi Conceal ctermfg=8 ctermbg=NONE
 
 " folds
-hi Folded ctermbg=0 ctermfg=65
+hi Folded ctermbg=233 ctermfg=65
 hi FoldColumn ctermbg=none ctermfg=yellow
 
 " cool italic comments
@@ -398,13 +522,19 @@ hi User9         ctermbg=black     ctermfg=white
 
 " Mappings: =========== {{{
 "-----------------------------
+" Plugins: {{{
+nnoremap <Leader>G :Goyo<CR>
+" }}}
+"-----------------------------
 " General:  {{{
+" Distraction Free Writting
+nnoremap <Leader>g :call DistractionFree()<CR>
 
 " smooth scrolling
-nnoremap <silent> <C-U> :call SmoothScroll(1)<Enter>
-nnoremap <silent> <C-D> :call SmoothScroll(0)<Enter>
-inoremap <silent> <C-U> <Esc>:call SmoothScroll(1)<Enter>i
-inoremap <silent> <C-D> <Esc>:call SmoothScroll(0)<Enter>i
+nnoremap <silent> <C-u> :call SmoothScroll(1)<Enter>
+nnoremap <silent> <C-d> :call SmoothScroll(0)<Enter>
+inoremap <silent> <C-u> <Esc>:call SmoothScroll(1)<Enter>i
+inoremap <silent> <C-d> <Esc>:call SmoothScroll(0)<Enter>i
 
 " makes it easier to find the cursor when n or N
 nnoremap <silent> n n:call HLNext(0.1)<CR>
@@ -424,7 +554,10 @@ nnoremap <silent> ,, :nohl<CR>
 nnoremap <Leader>s :so %<CR>
 
 " regex completion instead of whole word completion
-nnoremap <Leader><leader>f :find *
+nnoremap <Leader>ff :find *
+
+" fix indentaions
+nnoremap <Leader>fi gg=G
 
 " inserting empty lines
 nnoremap <Leader>o mxo<ESC>k`x
@@ -450,6 +583,8 @@ nnoremap <Leader>tt :tabs<CR>:tab
 nnoremap <Leader>tf :tabe %<CR>
 " open help docs in new tab
 nnoremap <Leader>th :tab help 
+" open mappings cheatsheet in a new tab
+nnoremap <Leader>tm :call OpenMappings()<CR>
 
 " changing between buffers made easier
 nnoremap <silent> <Leader>bn :bn<CR>
@@ -464,14 +599,19 @@ nnoremap <silent> ]Z :call GoToFold("next", "opened")<CR>
 nnoremap <silent> [Z :call GoToFold("prev", "opened")<CR>
 
 " toggling folds
-nnoremap <Leader>f za
-nnoremap <Leader>F zA
+nnoremap <Leader>z za
+nnoremap <Leader>Z zA
+
+" command mode
+cnoremap <C-j> <down>
+cnoremap <C-k> <up>
 
 " copying and pasting in native vim :O
-vnoremap <Leader>y y:!xsel -b <<< '<C-r>"'<CR><CR>:echo 'copied to clipboard'<CR>
-nnoremap <Leader>Y ggVG<Leader>y
+vnoremap <Leader>y :w !xclip -selection clipboard<CR>
+nnoremap <Leader>Y ggVG:w !xclip -selection clipboard<CR>
 nnoremap <Leader>p :read !xsel -b<CR>
 vnoremap <Leader>p "_dP
+nnoremap Y y$
 
 " delete the content of a line
 nnoremap <Leader>d S<ESC>
@@ -480,13 +620,20 @@ nnoremap <Leader>d S<ESC>
 nnoremap <silent> <Leader>/ :call ToggleComment()<CR>
 vnoremap <silent> <Leader>/ :call ToggleComment()<CR>
 
-" auto completion with tab
-inoremap <expr> <tab> TabCompletion()
+" surround text in visual mode
+vnoremap <Leader>" xa""<ESC>P
+vnoremap <Leader>( xa()<ESC>P
+vnoremap <Leader>{ xa{}<ESC>P
+vnoremap <Leader>[ xa[]<ESC>P
 
 " changing the size of splits
 nnoremap <Leader>M :call SplitEnvironment()<CR>
 
 " AutoCompletion: {{{
+" auto completion with tab
+inoremap <expr> <Tab> TabCompletion(1)
+inoremap <expr> <S-Tab> TabCompletion(0)
+
 inoremap <expr> <CR> pumvisible() ? "\<C-y>" : "\<C-g>u\<CR>"
 inoremap <expr> <C-n> pumvisible() ? '<C-n>' :
       \ '<C-n><C-r>=pumvisible() ? "\<lt>Down>" : ""<CR>'
@@ -501,10 +648,6 @@ inoremap <expr> <S-Space> (pumvisible() ? (col('.') > 1 ? '<Esc>i<Right>' : '<Es
       \ '<C-x><C-u><C-r>=pumvisible() ? "\<lt>C-n>\<lt>C-p>\<lt>Down>" : ""<CR>'
 " }}}
 
-" }}}
-"-----------------------------
-" Plugins: {{{
-nnoremap <Leader>G :Goyo<CR>
 " }}}
 "-----------------------------
 " FileExplorer: {{{
@@ -595,12 +738,7 @@ endfunction
 
 " AutoCmd: ============ {{{
 " making marks for easier movment
-"autocmd BufWinEnter ~/.vimrc call SetVimrcMarkers()
-" indenting lines
-autocmd VimEnter,BufNew,BufNewFile,BufWinEnter * call IndentLines()
-" status line
-autocmd VimEnter,BufWinEnter,BufWinLeave,BufHidden,BufRead * call StatusLine()
-autocmd VimEnter * call AutoPairs()
+" autocmd BufWinEnter ~/.vimrc call SetVimrcMarkers()
 
 " Commenting blocks of code.
 augroup commenting_blocks_of_code
@@ -609,10 +747,27 @@ augroup commenting_blocks_of_code
   autocmd FileType javascript       let b:comment_leader = '//'
   autocmd FileType sh,ruby,python   let b:comment_leader = '#'
   autocmd FileType conf,fstab       let b:comment_leader = '#'
+  autocmd FileType xdefaults        let b:comment_leader = '!!'
   autocmd FileType tex              let b:comment_leader = '%'
   autocmd FileType mail             let b:comment_leader = '>'
   autocmd FileType vim              let b:comment_leader = '"'
 augroup END
+
+" jump to last position in file from last session
+if has("autocmd")
+  au BufReadPost * if line("'\"") > 1 && line("'\"") <= line("$") | exe "normal! g'\"" | endif
+endif
+ 
+" Run xrdb whenever Xdefaults or Xresources are updated.
+autocmd BufRead,BufNewFile Xresources,Xdefaults,xresources,xdefaults set filetype=xdefaults
+autocmd BufWritePost Xresources,Xdefaults,xresources,xdefaults !xrdb %
+
+" Mini Plugins, just functions, less lines = better experience
+autocmd VimEnter,BufNew,BufLeave,BufRead *      call IndentLines("on")
+autocmd VimEnter,VimResized,WinEnter,WinLeave * call StatusLine()
+autocmd VimEnter,Syntax,Colorscheme *           call RainbowPairs()
+autocmd VimEnter *                              call AutoPairs()
+
 " }}}
 
 " FileExplorer: ======= {{{
@@ -621,7 +776,7 @@ augroup END
 let g:netrw_banner=0                            " disble banner 
 let g:netrw_browse_split=4                      " open in prior window
 let g:netrw_altv=1                              " splits right
-let g:netrw_liststyle=0                         " display style
+let g:netrw_liststyle=3                         " display style
 let g:netrw_keepdir = 0
 let g:netrw_list_hide = '\(^\|\s\s\)\zs\.\S\+'  " hide dotfiles on open
 let g:netrw_winsize = 20                        " size of split
